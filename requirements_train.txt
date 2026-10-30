@@ -1,0 +1,5 @@
+-r requirements_inference.txt
+datasets            # streaming ARTPARK-IISc/Vaani-Noise-Event-Dataset
+pandas
+webrtcvad-wheels    # baseline clean/noise span carving
+pyyaml

@@ -1,0 +1,43 @@
+# Training lineage of the submitted model D (all stages warm-start from the previous one)
+noise_and_clean_data:
+  clean: Vaani Gold event-free spans carved by the baseline build_banks (min 2.5 s)
+  noise: [validation noise events of TRAIN clusters only (leak-free), ESC-50, MUSAN noise (free-sound + sound-bible), one augmented copy each]
+  mixing: {event_snr_db: [-20, 5], events_per_clip: [1, 4], event_sec: [0.3, 2.5], clip_sec: 5}
+  augmentation: {speed: [0.9, 1.0, 1.1], eq: "p=0.6 low-pass 2-7 kHz or high-pass 100-500 Hz", reverb: "p=0.5 synthetic exp-decay RT 0.15-0.7 s"}
+stages:
+  - name: E8        # Kaggle T4, fp32
+    init: MP-SENet DNS (g_best_dns)
+    mixtures: 8000 (validation train-cluster noise + ESC-50)
+    batch: 2
+    crop_sec: 1.0
+    lr: 2.0e-4
+    epochs: 5
+  - name: E9-B      # Kaggle T4, fp32
+    init: E8
+    mixtures: 16000 (+ partial MUSAN, + augmentation)
+    batch: 2
+    crop_sec: 1.0
+    lr: 1.0e-4
+    epochs: 3
+  - name: E10-R run 1   # RunPod A100 SXM 80 GB, bf16 forward
+    init: E9-B
+    mixtures: 40000 (8,733 clean spans from 11,000 Gold clips; 10,192 noise segments)
+    batch: 4
+    crop_sec: 3.0
+    lr: 1.0e-4
+    schedule: OneCycle over 8 epochs (stopped at ~26k steps); epoch-0 checkpoint kept (held-out 17.00 dB)
+  - name: E10-R anneal  # -> model D
+    init: E10-R run 1 epoch 0
+    mixtures: same 40000
+    batch: 4
+    crop_sec: 3.0
+    lr: 5.0e-5
+    schedule: OneCycle sized to exactly 1 epoch (9,500 steps), anneals to ~0
+    result: held-out SI-SDR 17.26 dB
+optional_novelty_E13:   # not used for the leaderboard submission
+  data_mode: e13 (target = natural Vaani clip as-is, input = + library events)
+  init: D
+  batch: 2
+  crop_sec: 6.0
+  lr: 7.0e-5
+  steps: 13775 (sized from a measured 5,009 steps/h for 2.75 h)

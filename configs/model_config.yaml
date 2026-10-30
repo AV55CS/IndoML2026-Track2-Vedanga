@@ -1,0 +1,13 @@
+# MP-SENet architecture: unchanged official configuration (third_party/MP-SENet/best_ckpt/config.json)
+#   n_fft 400, hop_size 100, win_size 400, compress_factor 0.3, dense_channel 64, 4 TS-Transformer blocks, ~2.26 M parameters
+model: MP-SENet
+pretrained_init: third_party/MP-SENet/best_ckpt/g_best_dns     # official DNS-Challenge checkpoint (MIT licence)
+final_checkpoint: checkpoints/D_e10r_anneal.pt                  # model D, used for the Phase-2 leaderboard submission
+
+inference:                # settings of the selected submission (Codabench Combined 15.21)
+  sample_rate: 16000
+  window_sec: 8.0         # windowed inference with linear cross-fades
+  hop_sec: 6.0
+  shift_tta: [0, 12, 25, 37, 50, 62, 75, 87]   # sub-hop delays in samples (STFT hop = 100), outputs realigned and averaged
+  level: match_input_rms  # SI-SDR is scale-invariant; keeps a natural level for the ASR
+  asr: ARTPARK-IISc/SraVaani-1.0 (mandated)

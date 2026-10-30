@@ -1,0 +1,13 @@
+torch>=2.4          # developed with torch 2.8.0+cu128 (RunPod) and the Kaggle default image
+numpy<2.3
+scipy
+soundfile
+librosa
+einops
+matplotlib          # imported by MP-SENet utils
+joblib              # imported by MP-SENet model
+transformers        # SraVaani-1.0 (mandated ASR) via the baseline wrapper
+accelerate
+sentencepiece
+huggingface_hub
+jiwer
