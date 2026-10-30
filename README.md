@@ -1,4 +1,4 @@
-# IndoML 2026 Datathon — Track 2 (Noise Event Removal) — Team **Vedanga**
+# IndoML 2026 Datathon  Track 2 (Noise Event Removal) - Team **Vedanga**
 
 **Author:** Avinash Kumar Sharma, Wadhwani School of Data Science and AI, IIT Madras (Codabench: avics55)
 
