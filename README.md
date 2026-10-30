@@ -1,8 +1,7 @@
 # IndoML 2026 Datathon — Track 2 (Noise Event Removal) — Team **Vedanga**
+**Author:** Avinash Kumar Sharma, Wadhwani School of Data Science and AI, IIT Madras (Codabench: avics55)
 
-**Author:** Avinash Kumar Sharma (solo) — Wadhwani School of Data Science and AI, IIT Madras · Codabench: `avics55`
-
-Phase-2 selected submission: **Codabench Combined 15.21** (SI-SDR 13.18 dB, ΔWER +2.02 %: synthetic +5.68 %, natural +0.30 %, audit PASS).
+**Phase 2 result:** Combined score 15.21 (SI-SDR 13.18 dB, ΔWER +2.02%)
 
 **Method in one line:** phase-aware **MP-SENet** (2.26 M parameters) initialised from the official DNS-Challenge checkpoint, fine-tuned in four warm-started stages on leak-free simulated Vaani mixtures (Vaani Gold event-free speech + validation noise of *training* clusters only + ESC-50 + MUSAN noise + augmentation), followed by 8-s windowed inference with **shift test-time augmentation ×8**; transcripts from the mandated **SraVaani-1.0** ASR.
 
