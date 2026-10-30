@@ -30,7 +30,7 @@ docs/technical_report.pdf      docs/experiment_log.md
 
 ## Setup
 ```bash
-git clone <this repo> && cd <repo>
+git clone https://github.com/AV55CS/IndoML2026-Track2-Vedanga && cd IndoML2026-Track2-Vedanga
 bash scripts/setup.sh requirements_inference.txt     # or requirements_train.txt for training
 export HF_TOKEN=hf_...                               # SraVaani-1.0 and the Vaani dataset are gated on Hugging Face
 ```
