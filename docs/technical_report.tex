@@ -1,114 +1,153 @@
 \documentclass[conference]{IEEEtran}
-\usepackage{amsmath,amssymb,booktabs,graphicx,url}
+\usepackage{amsmath,amssymb,booktabs,graphicx,url,array}
+\usepackage{xurl}
 \usepackage[hidelinks]{hyperref}
 \usepackage{tikz}\usetikzlibrary{arrows.meta,positioning}
 \begin{document}
-\title{Leak-Free Fine-Tuning of a Phase-Aware Enhancer and Diagnosing Test-Set Mismatch for Indic Noise-Event Removal}
+\title{Phase-Aware Speech Enhancement for Noise-Event Removal in Indic Speech: Leak-Free Fine-Tuning and Test-Set Analysis}
 \author{\IEEEauthorblockN{Avinash Kumar Sharma (Team Vedanga)}
 \IEEEauthorblockA{Wadhwani School of Data Science and AI, IIT Madras, Chennai, India\\ avics2020@gmail.com}}
 \maketitle
 
 \begin{abstract}
-We describe our solution to Track~2 (Noise Event Removal) of Datathon@IndoML 2026, scored as SI-SDR on synthetic clips plus $100\times\Delta$WER of the mandated SraVaani-1.0 ASR. We fine-tune the phase-aware MP-SENet (2.26\,M parameters), initialised from its DNS-Challenge checkpoint, in four warm-started stages on simulated Vaani mixtures built with a leak-free protocol: validation noise events are clustered and only training clusters are used, because 98.8\% of the validation events are reused across clips. Inference uses 8-s windows and shift test-time augmentation (TTA). The selected submission scores 15.21 (SI-SDR 13.18\,dB, $\Delta$WER $+2.02$\%). We also diagnose why local and leaderboard scores differ by about 5\,dB: test clips are three times longer, mostly event-free, and their references keep native Vaani noise. A local set built from noisy Vaani clips plus unseen library events reproduces the leaderboard SI-SDR of our model (12.66 vs.\ 13.18\,dB), and an ``event-only'' training recipe improves it by 0.28\,dB.
+This report describes our submission to Track~2 (Noise Event Removal) of the Datathon@IndoML 2026 challenge. The task is to suppress transient noise events in spontaneous Indic speech while preserving intelligibility for a fixed ASR system, SraVaani-1.0. Our system is based on MP-SENet, a phase-aware enhancement model, initialised from a checkpoint trained on DNS Challenge data and fine-tuned on simulated mixtures derived from the Vaani corpus. Because most noise events in the validation set recur across clips, we build training and evaluation splits at the level of noise clusters. At inference, clips are processed in overlapping 8-s windows, and predictions are averaged over several small time shifts of the input. The final system obtains a combined score of 15.21 on the Phase~2 leaderboard (SI-SDR 13.18\,dB, $\Delta$WER $+2.02$\%). We also analyse the gap between validation and test performance and show that an evaluation set built from noisy Vaani recordings with added events closely reproduces the leaderboard SI-SDR.
 \end{abstract}
 
 \section{Introduction}
-Track~2 asks for 16-kHz enhanced audio that suppresses noise events (horns, animals, appliances, alarms, etc.) in spontaneous Indic speech while preserving the speech. Submissions are scored as $\text{Combined}=\text{SI-SDR}_\text{syn}+100\,\Delta\text{WER}$, where SI-SDR~\cite{sisdr} is averaged over the 1{,}099 synthetic test clips and $\Delta$WER is the pooled WER reduction of SraVaani-1.0 over all 3{,}178 test clips (1{,}099 synthetic, 2{,}079 natural); transcripts are audited by re-running the ASR on the submitted WAVs. The test set provides audio only (no timestamps). Our solution has three parts: a leak-free validation protocol, staged fine-tuning of a phase-aware enhancer on Vaani-like simulations, and an inference recipe tuned for long clips. We also report what failed and a diagnosis of the local/leaderboard gap.
+Speech collected in everyday settings often contains short, non-stationary noise events such as vehicle horns, animal sounds, alarms, and household appliances. These events overlap with speech and degrade both perceived quality and automatic speech recognition (ASR). Track~2 of the Datathon@IndoML 2026 challenge addresses this problem for spontaneous Indic speech from the Vaani Noise Event Dataset~\cite{basu2026vaani}: given a noisy recording, a system must return a 16-kHz enhanced signal that suppresses the noise events while preserving the speech.
+
+Systems are evaluated with a combined score, $\text{SI-SDR}_\text{syn} + 100\,\Delta\text{WER}$. The SI-SDR term~\cite{le2019sdr} is averaged over the 1{,}099 synthetic test clips, for which clean references exist, and $\Delta$WER is the pooled reduction in word error rate of the mandated SraVaani-1.0 ASR~\cite{pulikodan2026sravaani} over all 3{,}178 test clips, including 2{,}079 natural recordings. The test set provides audio only, without event timestamps.
+
+Our approach fine-tunes a phase-aware enhancement model, MP-SENet~\cite{lu2023mp}, on simulated mixtures that resemble the Vaani data, using training and validation splits constructed to avoid noise leakage, and applies an inference scheme suited to long recordings. Our main contributions are (i) a cluster-level validation protocol that removes the noise leakage present in the validation data, (ii) a staged fine-tuning and inference recipe for a phase-aware enhancer that reaches a combined score of 15.21, and (iii) an analysis of the gap between validation and test scores, together with an evaluation set that reproduces the leaderboard SI-SDR of our model and an event-only training target motivated by it. We also report experiments that did not improve performance.
 
 \section{Training Data and Preprocessing}
-\textbf{Vaani.} Clean speech comes from the Gold split of ARTPARK-IISc/Vaani-Noise-Event-Dataset~\cite{vaani}: event-free spans ($\ge$2.5\,s) carved with the organisers' baseline~\cite{baseline} from 6{,}000 clips (3{,}968 spans, early stages) and 11{,}000 clips (8{,}733 spans, final stages).
+All audio is resampled to 16\,kHz and converted to mono.
 
-\textbf{Validation and leak-free split.} The validation set has 695 synthetic pairs (noisy, clean reference, timestamps) and 1{,}806 natural clips. Noise events are isolated as noisy$-$clean inside the timestamps (1{,}819 events). Near-duplicates are clustered (cosine $>0.95$ on 48$\times$48 log-mel fingerprints; 139 clusters) and 62 clusters are held out; the 228 synthetic clips whose events all lie in held-out clusters form the evaluation set, and only the 644 events of training clusters enter the noise bank. A first model fine-tuned on a random validation split scored 12.3\,dB locally but 0.83 on the leaderboard, which exposed the reuse.
+\subsection{Vaani speech}
+Clean speech is taken from the Vaani Noise Event Dataset~\cite{basu2026vaani}, which provides spontaneous Indic speech with time-stamped noise-event annotations in Gold (verified), Silver and Bronze subsets. We stream clips from the Gold subset and, using the organisers' baseline code~\cite{nag2026baseline}, extract event-free regions of at least 2.5\,s as clean speech. The first two training stages use 6{,}000 clips (3{,}968 clean segments) and the last two stages use 11{,}000 clips (8{,}733 clean segments).
 
-\textbf{Additional data.} ESC-50~\cite{esc50} (1{,}998 trimmed event segments, $\le$2.5\,s; CC BY-NC 3.0) and the MUSAN noise subset~\cite{musan} (930 files $\rightarrow$ 2{,}456 random crops of 0.5--2.5\,s; CC BY 4.0).
+\subsection{Validation data and leak-free split}
+The challenge validation set contains 1{,}806 natural recordings and 695 synthetic pairs; each synthetic pair consists of a noisy signal, its clean reference and the event timestamps. We isolate the 1{,}819 noise events of the synthetic pairs as the difference between the noisy and clean signals inside the annotated intervals. Most of these events recur across clips: about 98.8\% have a near-identical copy elsewhere. A model fine-tuned on a random split of these pairs reached 12.3\,dB \mbox{SI-SDR} on its local held-out portion but a combined score of only 0.83 on the leaderboard. We therefore cluster the events by the cosine similarity of their log-mel fingerprints (threshold 0.95), which gives 139 clusters, and hold out 62 of them. The 228 synthetic clips whose events all belong to held-out clusters form our evaluation set, and only the 644 events from the remaining clusters are used for training.
 
-\textbf{Augmentation.} One augmented copy per noise segment: speed 0.9/1.0/1.1; with $p{=}0.6$ a 4th-order low-pass (2--7\,kHz) or 2nd-order high-pass (100--500\,Hz); with $p{=}0.5$ a synthetic exponentially decaying reverb (RT 0.15--0.7\,s). Final pool: 10{,}192 segments.
+\subsection{Additional noise datasets}
+We use two public noise collections. From ESC-50~\cite{piczak2015esc} (2{,}000 clips, 50 classes, CC BY-NC 3.0), each clip is trimmed of leading and trailing silence and truncated to 2.5\,s, giving 1{,}998 event segments. From the noise portion of MUSAN~\cite{snyder2015musan} (930 recordings from Freesound and SoundBible, CC BY 4.0), we draw up to four random crops of 0.5--2.5\,s per recording and discard near-silent crops, giving 2{,}456 segments.
 
-\textbf{Mixing.} 5-s mixtures with 1--4 events of 0.3--2.5\,s at event SNR $\in[-20,5]$\,dB relative to speech (mean input SI-SDR $\approx-5$\,dB), matching the validation statistics. Datasets: 8k (stage 1), 16k (stage 2) and 40k mixtures (stages 3--4).
+\subsection{Augmentation}
+Each noise segment receives one augmented copy, produced by the following steps applied in order: (i) speed perturbation by a factor drawn from $\{0.9, 1.0, 1.1\}$; (ii) with probability 0.6, spectral shaping by either a fourth-order Butterworth low-pass filter with a cut-off between 2 and 7\,kHz or a second-order high-pass filter with a cut-off between 100 and 500\,Hz (equal probability); (iii) with probability 0.5, convolution with a synthetic room impulse response, generated as exponentially decaying white noise with a reverberation time between 0.15 and 0.7\,s; and (iv) peak normalisation. Copies shorter than 0.3\,s are discarded.
 
-\section{Proposed Method}
-\textbf{Architecture.} MP-SENet~\cite{mpsenet} predicts magnitude and phase in parallel from the compressed STFT ($n_\text{fft}{=}400$, hop 100, compression 0.3) with four time--frequency Transformer blocks. We keep the official configuration and initialise from the DNS-Challenge~\cite{dns} checkpoint \texttt{g\_best\_dns}. Replacing the baseline magnitude-mask BiGRU (noisy phase) by this phase-aware model was the largest single gain (3.40 $\rightarrow$ 10.00 zero-shot).
+\subsection{Mixture simulation}
+Training mixtures are generated with the baseline simulator. Each 5-s mixture contains a clean speech segment and one to four non-overlapping noise events of 0.3--2.5\,s placed at random positions with 20-ms fades. Each event is scaled to a local signal-to-noise ratio drawn uniformly from $[-20, 5]$\,dB, measured against the speech power within the event interval (floored at 10\% of the clip power), so that events can be up to 20\,dB louder than the speech. Noise is added only inside the event intervals, which matches the structure of the validation pairs; the mean input SI-SDR is about $-5$\,dB. The model is trained in four consecutive stages (Section~\ref{sec:method}), with a growing noise pool and number of mixtures: stage~1 uses the validation training-cluster events and ESC-50 without augmentation (8{,}000 mixtures); stage~2 adds an initial subset of 397 MUSAN crops and augmentation (16{,}000 mixtures); stages~3 and~4 use the full pool of 5{,}098 segments plus 5{,}094 augmented copies, 10{,}192 in total (40{,}000 mixtures).
 
-\textbf{Loss.} Generator terms of MP-SENet without the metric discriminator: $\mathcal{L}=0.9\,\mathcal{L}_\text{mag}+0.3(\mathcal{L}_\text{IP}+\mathcal{L}_\text{GD}+\mathcal{L}_\text{IAF})+0.2\,\mathcal{L}_\text{com}+0.2\,\mathcal{L}_\text{con}+0.2\,\mathcal{L}_\text{time}$ (MSE on compressed magnitude and complex spectra, anti-wrapping phase losses, STFT consistency, waveform L1). An ASR-feature loss on SraVaani encoder features helped the small baseline (+0.8) but on MP-SENet traded SI-SDR for ASR roughly one-to-one ($\lambda{=}0.5$/1.5) and was not used.
+\section{Proposed Method}\label{sec:method}
+\subsection{Model}
+We use MP-SENet~\cite{lu2023mp}, which enhances speech in the short-time Fourier transform (STFT) domain and predicts magnitude and phase in parallel. The noisy waveform is analysed with a 400-point STFT (25-ms window, 6.25-ms hop); the magnitude is power-law compressed with exponent 0.3 and stacked with the phase. A densely connected convolutional encoder is followed by four two-stage transformer blocks that model the time and frequency axes in turn. A magnitude decoder predicts a bounded mask for the compressed magnitude, and a phase decoder predicts the clean phase from two parallel outputs combined through a two-argument arctangent. The enhanced waveform is obtained by the inverse STFT. We keep the official configuration (64 channels, about 2.26\,M parameters). Replacing the baseline magnitude-masking network, which reuses the noisy phase, with this model gave the largest single improvement in our experiments (Section~\ref{sec:results}).
 
-\textbf{Training.} AdamW~\cite{adamw} ($\beta{=}0.8/0.99$), OneCycle~\cite{onecycle} (5\% warm-up), gradient clipping 5, inputs RMS-normalised. Stage 1 (E8): DNS init, LR $2{\times}10^{-4}$, 5 epochs, 1-s crops, batch 2, fp32 on a T4 (fp16 AMP silently skipped updates). Stage 2 (E9-B): LR $10^{-4}$, 3 epochs, 16k mixtures. Stage 3: 40k mixtures, 3-s crops, batch 4, bf16 forward on an A100; the 8-epoch schedule did not decay within the time budget (held-out 17.00\,dB). Stage 4 (annealing): one epoch (9{,}500 steps) with LR $5{\times}10^{-5}$ decaying to $\approx0$ gives model D (17.26\,dB). Lesson: size the schedule to the measured throughput.
+\subsection{Pretrained models and checkpoints}
+Table~\ref{tab:models} lists all pretrained models and checkpoints used. Our code, configuration files and the two checkpoints trained in this work are available in our repository;\footnote{\url{https://github.com/AV55CS/IndoML2026-Track2-Vedanga}} the MP-SENet DNS checkpoint and SraVaani-1.0 are obtained from their original sources.
 
-\textbf{Reproducibility.} Training and inference code, configuration files, the final checkpoint and the original notebooks are released in our public repository; the README lists the software and hardware (A100-SXM4 80\,GB with PyTorch 2.8/CUDA 12.8 for the final stages and inference; Kaggle T4 for early stages).
+\begin{table}[t]\centering\caption{Pretrained models and checkpoints.}\label{tab:models}\footnotesize\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{2.75cm}>{\raggedright\arraybackslash}p{2.4cm}}\toprule
+Model & Source / version & Role\\\midrule
+MP-SENet DNS checkpoint (\texttt{g\_best\_dns}) & official repository (\texttt{best\_ckpt/})~\cite{lu2023mp}, trained on DNS Challenge data~\cite{reddy2020interspeech} & initialisation of the enhancer\\
+SraVaani-1.0~\cite{pulikodan2026sravaani} & version 1.0, Hugging Face (ARTPARK-IISc), revision \texttt{f5dd535} & mandated ASR: transcripts of the enhanced audio (frozen)\\
+\texttt{D\_e10r\_anneal.pt} & this work & final enhancer (submitted)\\
+\texttt{e13\_D.pt} & this work & event-only model (Section~\ref{sec:results}); not submitted\\\bottomrule
+\end{tabular}\end{table}
 
-\textbf{Inference.} Each clip is RMS-normalised and enhanced on 8-s windows (6-s hop, linear cross-fades); 60\% of clips exceed 4\,s, and 8-s windows beat 4-s ones. Shift TTA averages the realigned outputs of 8 copies delayed by 0--87 samples (sub-hop STFT alignments), which reduces artefacts. Outputs are rescaled to the input RMS. Transcripts come from SraVaani-1.0~\cite{sravaani}. Every clip is processed by the model.
+\subsection{Training objective}
+We use the generator losses of MP-SENet with the effective weights of the original implementation, but without its metric discriminator:
+\begin{equation}
+\begin{split}
+\mathcal{L}={}&0.9\,\mathcal{L}_\text{mag}+0.3\,(\mathcal{L}_\text{IP}+\mathcal{L}_\text{GD}+\mathcal{L}_\text{IAF})\\
+&+0.2\,\mathcal{L}_\text{com}+0.2\,\mathcal{L}_\text{con}+0.2\,\mathcal{L}_\text{time},
+\end{split}
+\end{equation}
+where $\mathcal{L}_\text{mag}$ and $\mathcal{L}_\text{com}$ are mean squared errors on the compressed magnitude and compressed complex spectra, $\mathcal{L}_\text{IP}$, $\mathcal{L}_\text{GD}$ and $\mathcal{L}_\text{IAF}$ are anti-wrapping losses on the instantaneous phase, group delay and instantaneous angular frequency, $\mathcal{L}_\text{con}$ penalises the difference between the predicted complex spectrum and the STFT of the reconstructed waveform, and $\mathcal{L}_\text{time}$ is the L1 distance between waveforms. Inputs and targets are scaled by the root-mean-square level of the noisy input.
 
+\subsection{Training procedure}\label{sec:training}
+Training proceeds in four stages, each initialised from the previous one (Table~\ref{tab:stages}). All stages use AdamW~\cite{loshchilov2017decoupled} ($\beta_1{=}0.8$, $\beta_2{=}0.99$), a one-cycle learning-rate schedule~\cite{smith2019super} with 5\% warm-up followed by cosine decay, gradient-norm clipping at 5, and random crops of the 5-s mixtures. Checkpoints are selected by SI-SDR on the held-out validation clips. Stages~1 and~2 run on an NVIDIA T4 in full precision; mixed precision with float16 silently skipped optimiser steps because of gradient-scaler overflow, so it was not used. Stages~3 and~4 run on an NVIDIA A100 (80\,GB) with bfloat16 autocast for the network forward pass and float32 losses. In stage~3 the schedule was set for eight epochs, but the available time allowed about three, so the learning rate never decayed; we kept the first-epoch checkpoint (17.00\,dB). Stage~4 restarts from that checkpoint with a schedule sized to exactly one epoch (9{,}500 steps), during which the learning rate decays from $5{\times}10^{-5}$ to almost zero; this produces the final model (17.26\,dB).
+
+\begin{table}[t]\centering\caption{Training stages of the final model (SI-SDR on the held-out validation clips).}\label{tab:stages}\footnotesize\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lcccc}\toprule
+Stage & Mixtures & Crop$\times$batch & Peak LR & SI-SDR (dB)\\\midrule
+1 (DNS init.) & 8k & 1\,s $\times$ 2 & $2{\times}10^{-4}$ & 16.68\\
+2 & 16k & 1\,s $\times$ 2 & $10^{-4}$ & 16.93\\
+3 & 40k & 3\,s $\times$ 4 & $10^{-4}$ & 17.00\\
+4 (annealing) & 40k & 3\,s $\times$ 4 & $5{\times}10^{-5}$ & 17.26\\\bottomrule
+\end{tabular}\end{table}
+
+\subsection{Inference}
+Each test clip is normalised to unit root-mean-square level and enhanced in 8-s windows with a 6-s hop; overlapping regions are combined with linear cross-fades. About 60\% of the validation clips are longer than 4\,s and the test clips are longer still (median 11.9\,s); 8-s windows performed better than 4-s windows. To reduce artefacts, we apply time-shift test-time augmentation: the clip is delayed by $k \in \{0, 12, 25, 37, 50, 62, 75, 87\}$ samples (fractions of the 100-sample STFT hop), enhanced, realigned, and the eight outputs are averaged. The result is rescaled to the root-mean-square level of the input and limited to a peak of 0.99. Every clip is processed in the same way; no clip-level gating is applied. Transcripts are obtained by running SraVaani-1.0 on the enhanced audio (Fig.~\ref{fig:pipe}). On one A100, each pass over the 3{,}178 test clips takes about 17 minutes.
 
 \begin{figure}[t]\centering
-\begin{tikzpicture}[node distance=1.2mm, every node/.style={font=\scriptsize, align=center}, box/.style={draw, rounded corners=1pt, inner sep=2pt, minimum height=6mm}, ->/.style={-{Latex[length=1.5mm]}}]
-\node[box] (a) {noisy clip\\(any length)};
-\node[box, right=of a] (b) {RMS\\normalise};
-\node[box, right=of b, fill=gray!12] (c) {MP-SENet D\\8-s win, 6-s hop\\$\times$8 shifts (0..87)};
-\node[box, right=of c] (d) {avg +\\RMS\\level};
-\node[box, below=4mm of d] (e) {16-kHz PCM-16\\WAV};
-\node[box, left=of e] (f) {SraVaani-1.0\\ASR};
-\node[box, left=of f] (g) {transcripts.jsonl\\+ ZIP};
-\draw[->] (a)--(b); \draw[->] (b)--(c); \draw[->] (c)--(d); \draw[->] (d)--(e); \draw[->] (e)--(f); \draw[->] (f)--(g);
+\begin{tikzpicture}[
+  font=\footnotesize, >={Latex[length=1.6mm]},
+  blk/.style={draw=black!70, line width=0.5pt, rounded corners=2pt, fill=black!4, align=center,
+              minimum height=9mm, text width=17mm, inner sep=2pt},
+  key/.style={blk, fill=black!12, line width=0.7pt},
+  lab/.style={font=\scriptsize\itshape, text=black!65}]
+\node[blk] (in)  {Noisy clip};
+\node[blk, right=4mm of in] (nm) {RMS\\normalisation};
+\node[key, right=4mm of nm] (mp) {MP-SENet\\8-s windows};
+\node[blk, right=4mm of mp] (av) {Average over\\8 shifts};
+\node[blk, below=7mm of av] (lv) {Rescale to\\input RMS};
+\node[blk, left=4mm of lv] (wv) {Enhanced\\16-kHz WAV};
+\node[key, left=4mm of wv] (asr) {SraVaani-1.0\\ASR};
+\node[blk, left=4mm of asr] (tx) {Transcripts\\(JSONL)};
+\draw[->] (in) -- (nm); \draw[->] (nm) -- (mp); \draw[->] (mp) -- (av);
+\draw[->] (av) -- (lv); \draw[->] (lv) -- (wv); \draw[->] (wv) -- (asr); \draw[->] (asr) -- (tx);
+\node[lab, above=0.5mm of mp] {shifts $k\in\{0,12,\dots,87\}$};
 \end{tikzpicture}
-\caption{Inference pipeline of the selected submission (every clip is processed by the model).}\label{fig:pipe}
+\caption{Inference pipeline. Each clip is enhanced at eight sub-hop time shifts, the realigned outputs are averaged, and the mandated ASR transcribes the enhanced audio.}\label{fig:pipe}
 \end{figure}
 
-\begin{table}[t]\centering\caption{Training stages of the submitted model D (all warm-started; T4 fp32, A100 bf16).}\label{tab:stages}\footnotesize\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{lllccc}\toprule
-Stage & Init & Mix & Crop$\times$bs & LR & Held-out\\\midrule
-E8 (T4) & DNS & 8k & 1\,s$\times$2 & $2{\times}10^{-4}$ & 16.68\\
-E9-B (T4) & E8 & 16k+aug & 1\,s$\times$2 & $10^{-4}$ & 16.93\\
-E10-R (A100) & E9-B & 40k & 3\,s$\times$4 & $10^{-4}$ & 17.00\\
-Anneal$\rightarrow$D & E10-R & 40k & 3\,s$\times$4 & $5{\times}10^{-5}\!\rightarrow\!0$ & 17.26\\\bottomrule
-\end{tabular}\end{table}
+\subsection{Event-only fine-tuning (additional experiment)}
+Motivated by the analysis in Section~\ref{sec:results}, we also fine-tuned the final model so that it removes only added events and leaves the rest of the recording unchanged. The training target is a natural Vaani recording as captured, including its native background, and the input is the same recording with one to three library events added (ESC-50 folds 1--4, part of MUSAN, validation training-cluster events and their augmented copies). We used 30{,}000 such mixtures built from 10{,}206 natural recordings, 6-s crops with batch size 2, a peak learning rate of $7{\times}10^{-5}$, and 13{,}775 steps, a number derived from the measured training speed so that the schedule completes within the time budget.
 
-\textbf{Novelty: test-set diagnosis and event-only training.} Running D on 800 test clips (analysis only) showed median length 11.9\,s (validation 4.4\,s) and loud-noise occupancy of 10\% of frames (validation synthetic 39\%), while keeping the input where D removes little \emph{lowered} the test SI-SDR. A local set of \emph{noisy} Vaani clips plus unseen library events (ESC-50 fold 5, held-out MUSAN), with the Vaani clip itself as target, reproduces D's leaderboard SI-SDR (12.66 vs.\ 13.18\,dB) and its ASR pattern ($\Delta$WER $+5.1$ of a $+12.0$ ceiling, cf.\ leaderboard $+5.7$ vs.\ leaders' $\approx$17). This supports reading the task as removing only the added events while keeping native audio. We trained E13 accordingly (target = natural clip as-is, input = target + 1--3 library events; 30k mixtures from 10{,}206 natural clips; 6-s crops, 13{,}775 steps sized from a measured 5{,}009 steps/h).
+\section{Results and Conclusion}\label{sec:results}
+\subsection{Leaderboard results}
+Table~\ref{tab:lb} lists our Phase~2 submissions in chronological order. Replacing the baseline magnitude-masking network with MP-SENet raised the score from 4.24 to 10.00 without any fine-tuning, and fine-tuning on the simulated mixtures (stage~1) raised it to 13.99. Model averaging, longer inference windows and time-shift augmentation brought further gains, to 15.21 for the selected submission. Two output post-processing steps that helped on the validation split, rescaling to a fixed peak level and keeping the input in frames where the model removes little energy, lowered the leaderboard score and were not adopted.
 
-
-\textbf{What did not help.} Detect-and-suppress gating with ground-truth timestamps on the baseline (oracle) removed speech under events; bootstrapping noise from Vaani recordings ($x-D(x)$ inside annotated events) lowered held-out scores; time-reversal TTA was worse than shift TTA at equal compute; an output high-pass filter and soft limiting reduced SI-SDR by 2--6\,dB; mixing the input back (observation adding) raised ASR but cost more SI-SDR; averaging D with zero-shot MossFormerGAN, FRCRN or MossFormer2 lowered the local score; training D to remove continuous background (E12) lost 2.7\,dB on held-out clips.
-
-\section{Results and Conclusion}
-Table~\ref{tab:lb} lists leaderboard submissions; Table~\ref{tab:local} summarises local evidence (``val'' = 228 held-out synthetic + 600 natural clips).
-
-\begin{table}[t]\centering\caption{Codabench Phase-2 submissions.}\label{tab:lb}\footnotesize\setlength{\tabcolsep}{2.5pt}
+\begin{table}[t]\centering\caption{Phase~2 leaderboard submissions (SI-SDR in dB, $\Delta$WER in \% on synthetic / natural clips).}\label{tab:lb}\footnotesize\setlength{\tabcolsep}{2.5pt}
 \begin{tabular}{lccc}\toprule
-Submission & SI-SDR & $\Delta$WER s/n (\%) & Comb.\\\midrule
-Baseline mask-net, real.\ sim. & -- & -- & 3.40\\
-MP-SENet DNS, zero-shot & -- & -- & 10.00\\
-MP-SENet fine-tuned (E8) & 12.37 & 4.65 / 0.20 & 13.99\\
-avg(E9-A, E9-B) & 12.73 & 5.05 / 0.27 & 14.53\\
-B+D, 4-s windows & 12.86 & 5.41 / 0.31 & 14.81\\
-D, 8-s + TTA$\times$4 & 13.15 & 5.69 / 0.30 & 15.18\\
-\textbf{D, 8-s + TTA$\times$8} & \textbf{13.18} & \textbf{5.68 / 0.30} & \textbf{15.21}\\
-D TTA$\times$8 + peak 0.95 & 13.18 & 5.09 / 0.38 & 15.07\\
-D TTA$\times$8 + resid.\ gate & 12.51 & 5.26 / 0.26 & 14.37\\\bottomrule
+Submission & SI-SDR & $\Delta$WER & Combined\\\midrule
+Baseline masking network & -- & -- & 3.40\\
+\quad + ASR-feature loss ($\lambda{=}5$) & -- & -- & 4.24\\
+MP-SENet, no fine-tuning & -- & -- & 10.00\\
+Stage-1 model & 12.37 & 4.65 / 0.20 & 13.99\\
+Average of two stage-2 variants$^{a}$ & 12.73 & 5.05 / 0.27 & 14.53\\
+Stage-2 + final, 4-s windows & 12.86 & 5.41 / 0.31 & 14.81\\
+Final, 8-s windows, 4 shifts & 13.15 & 5.69 / 0.30 & 15.18\\
+\textbf{Final, 8-s windows, 8 shifts} & \textbf{13.18} & \textbf{5.68 / 0.30} & \textbf{15.21}\\
+\quad + rescaling to peak 0.95 & 13.18 & 5.09 / 0.38 & 15.07\\
+\quad + residual gating & 12.51 & 5.26 / 0.26 & 14.37\\\bottomrule
+\multicolumn{4}{p{0.95\columnwidth}}{\scriptsize $^{a}$Stage-2 model (Table~\ref{tab:stages}) and a variant trained from the DNS checkpoint with 1.5-s crops.}
 \end{tabular}\end{table}
 
-\begin{table}[t]\centering\caption{Local evaluations (win8 + TTA$\times$2 unless noted).}\label{tab:local}\footnotesize\setlength{\tabcolsep}{2.5pt}
+\subsection{Validation experiments}
+On the validation split we use a local score that mirrors the leaderboard, $\text{SI-SDR}+0.32\,\Delta\text{WER}_\text{syn}+0.68\,\Delta\text{WER}_\text{nat}$, computed on the 228 held-out synthetic clips and a fixed sample of natural clips. For the final model (Table~\ref{tab:local}, top), 8-s windows improve on 4-s windows, and each doubling of the number of time shifts adds a smaller gain. On the leaderboard, four shifts added 0.37 over the 4-s ensemble and eight shifts a further 0.03, so only part of the local gain transferred.
+
+Several alternatives did not improve the final system on the same split (in each comparison both systems are evaluated in the same configuration): an ASR-feature loss on SraVaani encoder outputs ($\lambda{=}0.5$ and 1.5 gave 18.29 and 18.16 versus 18.56); noise estimated from Vaani recordings as the residual of the model inside annotated events (18.25 versus 18.44); time-reversed inputs in place of additional shifts at equal compute (0.5--0.7 lower); output high-pass filtering or soft limiting, which reduced SI-SDR by 1.9--6\,dB; and averaging with the zero-shot MossFormerGAN, FRCRN or MossFormer2 models (17.62, 18.53 and 18.28 versus 19.20 for the final model alone). Training the model to also remove continuous background reduced the held-out SI-SDR from 17.25 to 14.57\,dB.
+
+\begin{table}[t]\centering\caption{Validation results. Top: local score of the final model. Bottom: SI-SDR (dB) on test-like sets for the final and event-only models (two shifts).}\label{tab:local}\footnotesize\setlength{\tabcolsep}{3pt}
 \begin{tabular}{lcc}\toprule
-Setting & D & alt.\\\midrule
-val comb.: win4 vs win8+TTA$\times$8 & 18.44 & 19.83\\
-val comb.: +MossFormerGAN / +FRCRN & 19.20 & 17.62 / 18.53\\
-held-out SI-SDR: E12 (bg.\ removal) & 17.25 & 14.57\\
-natural+events SI-SDR: E13 & 15.41 & 15.82\\
-12-s natural+events SI-SDR: E13 & 16.06 & 17.50\\
-\textbf{noisy Vaani+events: E13} & \textbf{12.66} & \textbf{12.95}\\\bottomrule
+Inference setting (final model) & \multicolumn{2}{c}{Local score}\\\midrule
+4-s windows & \multicolumn{2}{c}{18.44}\\
+8-s windows & \multicolumn{2}{c}{18.66}\\
+8-s windows, 2 / 4 / 8 shifts & \multicolumn{2}{c}{19.22 / 19.65 / 19.83}\\\midrule
+Evaluation set & Final & Event-only\\\midrule
+Held-out synthetic validation clips & 17.93 & 15.38\\
+Validation natural clips + unseen events & 15.41 & 15.82\\
+12-s concatenated natural clips + events & 16.06 & 17.50\\
+\textbf{Noisy Vaani clips + unseen events} & \textbf{12.66} & \textbf{12.95}\\\bottomrule
 \end{tabular}\end{table}
 
-\textbf{Findings.} (i) Leak-free validation is essential with reused noise. (ii) The phase-aware model class and in-domain fine-tuning give most of the gain; large generic SE models are 3--5\,dB behind and hurt SraVaani. (iii) Shift TTA transfers to the leaderboard (+0.37) but only about a third of its local gain; output post-processing (loudness, gating) gains locally and loses on the leaderboard, consistent with the literature that SE artefacts, not residual noise, drive ASR errors~\cite{iwamoto}. (iv) Validation and test synthetic data differ in length and in whether native noise remains in the reference; the noisy-Vaani set is the first local evaluation that reproduces our leaderboard SI-SDR.
+\subsection{Analysis of the validation--test gap}
+With eight shifts, the final model reaches 18.5\,dB SI-SDR on the held-out synthetic clips but 13.18\,dB on the test set. An analysis of 800 test clips (audio only) shows that test clips are longer than validation clips (median 11.9\,s versus 4.4\,s) and that frames dominated by the removed noise are rarer (median 10\% versus 39\%). Keeping the input in frames where the model removes little energy lowered the test SI-SDR, so these frames still differ from the reference after enhancement. We therefore built an evaluation set from 400 Vaani recordings held out from the event-only training, adding unseen events (ESC-50 fold~5 and held-out MUSAN crops) and using the original recording, with its native background, as the target. On this set the final model obtains 12.66\,dB, close to its leaderboard SI-SDR. On validation natural clips with added events, its $\Delta$WER is $+5.1$\% against $+12.0$\% for the reference itself, so it recovers less than half of the attainable WER reduction, consistent with its modest synthetic $\Delta$WER on the leaderboard ($+5.68$\%). These results suggest that the test references keep the native audio of the recordings, so that removing non-event background is penalised. The event-only model (Section~\ref{sec:method}) improves all test-like sets in Table~\ref{tab:local} but loses on the validation synthetic clips. Because of our limited compute budget, it was trained only shortly before the deadline and could not be scored on the leaderboard; its checkpoint is included in our repository.
 
-\textbf{Conclusion.} A small phase-aware enhancer fine-tuned on leak-free, Vaani-like simulations with budget-sized annealing and shift TTA reaches 15.21. The diagnosed test structure suggests that event-only targets on long, noisy natural clips are the next lever; E13 improves the test-mimicking set by 0.28\,dB but could not be scored on the leaderboard before the deadline.
+\subsection{Conclusion}
+We fine-tuned a phase-aware enhancement model on leak-free, Vaani-like simulations and combined it with windowed inference and time-shift averaging, reaching a combined score of 15.21 on the Phase~2 leaderboard. Building validation splits at the level of noise clusters was necessary to obtain reliable model selection, and the phase-aware model with in-domain fine-tuning accounted for most of the improvement. Our analysis of the gap between validation and test scores suggests that targets which retain the native audio of the recordings are a promising direction for this task. In future work we plan to evaluate the event-only model on the test set, scale event-only training to more and longer natural recordings, use the noisy-Vaani evaluation set for model selection instead of the synthetic validation clips, and condition the enhancer on predicted event timestamps from a Track~1 detector, so that suppression is concentrated where events occur.
 
-\begin{thebibliography}{99}\footnotesize
-\bibitem{mpsenet} Y.-X. Lu, Y. Ai, and Z.-H. Ling, ``MP-SENet: A speech enhancement model with parallel denoising of magnitude and phase spectra,'' in \emph{Proc. Interspeech}, 2023. Code/checkpoint: \url{https://github.com/yxlu-0102/MP-SENet}.
-\bibitem{dns} C. K. A. Reddy \emph{et al.}, ``The INTERSPEECH 2020 Deep Noise Suppression Challenge: Datasets, subjective testing framework, and challenge results,'' in \emph{Proc. Interspeech}, 2020.
-\bibitem{vaani} ARTPARK-IISc, ``VAANI Noise Event Dataset: A curated spontaneous speech dataset annotated with timestamps for noise events,'' arXiv:2609.02474, 2026.
-\bibitem{sravaani} ARTPARK-IISc, ``SraVaani-1.0,'' \url{https://huggingface.co/ARTPARK-IISc/SraVaani-1.0}.
-\bibitem{baseline} S. Nag \emph{et al.}, ``noise-event-detection-and-removal (IndoML 2026 baseline),'' \url{https://github.com/nagshubhadip/noise-event-detection-and-removal}.
-\bibitem{esc50} K. J. Piczak, ``ESC: Dataset for environmental sound classification,'' in \emph{Proc. ACM Multimedia}, 2015.
-\bibitem{musan} D. Snyder, G. Chen, and D. Povey, ``MUSAN: A music, speech, and noise corpus,'' arXiv:1510.08484, 2015.
-\bibitem{sisdr} J. Le Roux, S. Wisdom, H. Erdogan, and J. R. Hershey, ``SDR -- half-baked or well done?'' in \emph{Proc. ICASSP}, 2019.
-\bibitem{iwamoto} K. Iwamoto \emph{et al.}, ``How bad are artifacts?: Analyzing the impact of speech enhancement errors on ASR,'' in \emph{Proc. Interspeech}, 2022.
-\bibitem{adamw} I. Loshchilov and F. Hutter, ``Decoupled weight decay regularization,'' in \emph{Proc. ICLR}, 2019.
-\bibitem{onecycle} L. N. Smith and N. Topin, ``Super-convergence: Very fast training of neural networks using large learning rates,'' in \emph{Proc. SPIE}, 2019.
-\end{thebibliography}
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
 \end{document}
