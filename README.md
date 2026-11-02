@@ -1,4 +1,4 @@
-# IndoML 2026 Datathon  Track 2 (Noise Event Removal) - Team **Vedanga**
+# IndoML 2026 Datathon — Track 2 (Noise Event Removal) — Team **Vedanga**
 
 **Author:** Avinash Kumar Sharma, Wadhwani School of Data Science and AI, IIT Madras (Codabench: avics55)
 
@@ -6,7 +6,7 @@
 
 **Method in one line:** phase-aware **MP-SENet** (2.26 M parameters) initialised from the official DNS-Challenge checkpoint, fine-tuned in four consecutive stages (each starting from the previous one) on leak-free simulated Vaani mixtures (Vaani Gold event-free speech + validation noise of *training* clusters only + ESC-50 + MUSAN noise + augmentation), followed by 8-s windowed inference with **shift test-time augmentation ×8**; transcripts from the mandated **SraVaani-1.0** ASR.
 
-The full experiment log (every run, local and leaderboard numbers, negative results) is in `docs/experiment_log.md`; the technical report is `docs/technical_report.pdf`.
+The technical report is `docs/technical_report.pdf`; a summary of all experiments (including what did not work) is in `docs/experiments.md`.
 
 ---
 ## Repository layout
@@ -25,7 +25,7 @@ scripts/run_training.sh        # rebuilds the final model (and the optional even
 checkpoints/D_e10r_anneal.pt   # FINAL model used for the leaderboard (9 MB)
 checkpoints/e13_D.pt           # optional event-only model (extra experiment, not used on the leaderboard)
 notebooks/                     # original Kaggle / RunPod notebooks of the key runs
-docs/technical_report.pdf      docs/experiment_log.md
+docs/technical_report.pdf      docs/experiments.md
 ```
 
 ## Setup
@@ -47,7 +47,7 @@ bash scripts/run_inference.sh /path/to/indoml-track2-test/audio outputs/enhanced
 * Every clip is processed by the model (no clip-level gating). Processing: RMS-normalise → MP-SENet on 8-s windows
   (6-s hop, linear cross-fades) → repeat for 8 sub-hop delays (0, 12, …, 87 samples; STFT hop = 100) and average the
   realigned outputs → rescale to the input RMS, peak-limit at 0.99.
-* Runtime on the 3,178 test clips: ~2.4 h on one A100 (8 TTA passes), ~13 min per pass.
+* Runtime on the 3,178 test clips: ~2.3 h on one A100 (8 TTA passes), ~17 min per pass.
 
 ## Training
 ```bash
@@ -63,7 +63,7 @@ Stages (details in `train/config.yaml` and the report):
 | 3. Large-scale fine-tuning | stage 2 | 40k mixtures (8,733 clean spans, 10,192 noise segments) | 3 s × 4 | 1e-4, first-epoch checkpoint kept | A100 80 GB, bf16 |
 | 4. Annealing → **final model** | stage 3 | same 40k | 3 s × 4 | 5e-5 decaying to ~0, exactly 1 epoch | A100 80 GB, bf16 |
 
-The final model is `checkpoints/D_e10r_anneal.pt`. Internal run names used in `docs/experiment_log.md` and the notebooks: E8 = stage 1, E9-B = stage 2, E10-R = stage 3, anneal = stage 4 (model "D"), E13 = optional event-only model.
+The final model is `checkpoints/D_e10r_anneal.pt`. Internal run names used in the notebooks: E8 = stage 1, E9-B = stage 2, E10-R = stage 3, anneal = stage 4 (model "D"), E13 = optional event-only model.
 
 Leak-free validation: validation noise events are isolated (noisy − clean inside the timestamps), near-duplicates are clustered
 (cosine > 0.95 on log-mel fingerprints; 98.8 % of events are reused), and ~45 % of clusters are held out; held-out clips are
